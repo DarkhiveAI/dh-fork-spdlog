@@ -78,45 +78,30 @@ public:
 
     void log(const details::log_msg &msg) {
         std::lock_guard<Mutex> lock(*mutex_);
+
+        // Format using simple_formatter (has cached localtime)
         buf_.clear();
-        using namespace std::chrono;
-        auto time_since_epoch = msg.time.time_since_epoch();
-        auto secs = duration_cast<seconds>(time_since_epoch);
-        auto millis = duration_cast<milliseconds>(time_since_epoch) - duration_cast<milliseconds>(secs);
-        auto time_t_val = static_cast<std::time_t>(secs.count());
-        std::tm tm_val{};
-#ifdef _WIN32
-        localtime_s(&tm_val, &time_t_val);
-#else
-        localtime_r(&time_t_val, &tm_val);
-#endif
+        formatter_.format(msg, buf_);
+
+        // Find the level text and wrap it in color codes.
+        // Format is: [timestamp] [name] [LEVEL] payload\n
         auto color = colors_[static_cast<std::size_t>(msg.log_level)];
+        auto level_name = to_string_view(msg.log_level);
 
-        buf_.push_back('[');
-        simple_formatter::pad4(tm_val.tm_year + 1900, buf_);
-        buf_.push_back('-');
-        simple_formatter::pad2(tm_val.tm_mon + 1, buf_);
-        buf_.push_back('-');
-        simple_formatter::pad2(tm_val.tm_mday, buf_);
-        buf_.push_back(' ');
-        simple_formatter::pad2(tm_val.tm_hour, buf_);
-        buf_.push_back(':');
-        simple_formatter::pad2(tm_val.tm_min, buf_);
-        buf_.push_back(':');
-        simple_formatter::pad2(tm_val.tm_sec, buf_);
-        buf_.push_back('.');
-        simple_formatter::pad3(static_cast<int>(millis.count()), buf_);
-        buf_.append("] [");
-        buf_.append(msg.logger_name);
-        buf_.append("] [");
-        buf_.append(color);
-        buf_.append(to_string_view(msg.log_level));
-        buf_.append(ansi_color::reset);
-        buf_.append("] ");
-        buf_.append(msg.payload);
-        buf_.push_back('\n');
-
-        std::fwrite(buf_.data(), 1, buf_.size(), file_);
+        std::string_view sv(buf_);
+        auto pos = sv.find(level_name);
+        if (pos != std::string_view::npos) {
+            // Build colored output in color_buf_, single fwrite
+            color_buf_.clear();
+            color_buf_.append(buf_, 0, pos);
+            color_buf_.append(color);
+            color_buf_.append(level_name);
+            color_buf_.append(ansi_color::reset);
+            color_buf_.append(buf_, pos + level_name.size());
+            std::fwrite(color_buf_.data(), 1, color_buf_.size(), file_);
+        } else {
+            std::fwrite(buf_.data(), 1, buf_.size(), file_);
+        }
     }
 
     void flush() {
@@ -131,7 +116,9 @@ public:
 private:
     std::unique_ptr<Mutex> mutex_;
     std::FILE *file_;
+    simple_formatter formatter_;
     std::string buf_;
+    std::string color_buf_;
     std::array<std::string_view, levels_count> colors_{};
 };
 

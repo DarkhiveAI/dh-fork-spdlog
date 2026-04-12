@@ -5,7 +5,6 @@
 
 #include <chrono>
 #include <ctime>
-#include <format>
 #include <string>
 
 #include "details/log_msg.h"
@@ -14,7 +13,7 @@ namespace spdlog_lite {
 
 // Simple fixed-format formatter.
 // Output: [2024-01-15 10:30:45.123] [logger_name] [info] message\n
-// Uses hand-rolled timestamp formatting for performance (std::format with chrono is very slow on MSVC).
+// Caches localtime — only calls localtime_s/localtime_r when seconds change.
 struct simple_formatter {
 
     static void pad2(int n, std::string &dest) {
@@ -41,28 +40,31 @@ struct simple_formatter {
         auto time_since_epoch = msg.time.time_since_epoch();
         auto secs = duration_cast<seconds>(time_since_epoch);
         auto millis = duration_cast<milliseconds>(time_since_epoch) - duration_cast<milliseconds>(secs);
-        auto time_t_val = static_cast<std::time_t>(secs.count());
 
-        std::tm tm_val{};
+        // Cache localtime — only recalculate when seconds change
+        if (secs != last_secs_) {
+            last_secs_ = secs;
+            auto time_t_val = static_cast<std::time_t>(secs.count());
 #ifdef _WIN32
-        localtime_s(&tm_val, &time_t_val);
+            localtime_s(&cached_tm_, &time_t_val);
 #else
-        localtime_r(&time_t_val, &tm_val);
+            localtime_r(&time_t_val, &cached_tm_);
 #endif
+        }
 
         // [YYYY-MM-DD HH:MM:SS.mmm]
         dest.push_back('[');
-        pad4(tm_val.tm_year + 1900, dest);
+        pad4(cached_tm_.tm_year + 1900, dest);
         dest.push_back('-');
-        pad2(tm_val.tm_mon + 1, dest);
+        pad2(cached_tm_.tm_mon + 1, dest);
         dest.push_back('-');
-        pad2(tm_val.tm_mday, dest);
+        pad2(cached_tm_.tm_mday, dest);
         dest.push_back(' ');
-        pad2(tm_val.tm_hour, dest);
+        pad2(cached_tm_.tm_hour, dest);
         dest.push_back(':');
-        pad2(tm_val.tm_min, dest);
+        pad2(cached_tm_.tm_min, dest);
         dest.push_back(':');
-        pad2(tm_val.tm_sec, dest);
+        pad2(cached_tm_.tm_sec, dest);
         dest.push_back('.');
         pad3(static_cast<int>(millis.count()), dest);
         dest.append("] [");
@@ -73,6 +75,10 @@ struct simple_formatter {
         dest.append(msg.payload);
         dest.push_back('\n');
     }
+
+private:
+    std::chrono::seconds last_secs_{};
+    std::tm cached_tm_{};
 };
 
 }  // namespace spdlog_lite
