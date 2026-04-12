@@ -4,9 +4,7 @@
 #pragma once
 
 #include <array>
-#include <chrono>
 #include <cstdio>
-#include <format>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -22,6 +20,7 @@
 
 #include "../details/log_msg.h"
 #include "../details/null_mutex.h"
+#include "../formatter.h"
 
 namespace spdlog_lite::sinks {
 
@@ -80,16 +79,43 @@ public:
     void log(const details::log_msg &msg) {
         std::lock_guard<Mutex> lock(*mutex_);
         buf_.clear();
-        auto tp = std::chrono::floor<std::chrono::milliseconds>(msg.time);
+        using namespace std::chrono;
+        auto time_since_epoch = msg.time.time_since_epoch();
+        auto secs = duration_cast<seconds>(time_since_epoch);
+        auto millis = duration_cast<milliseconds>(time_since_epoch) - duration_cast<milliseconds>(secs);
+        auto time_t_val = static_cast<std::time_t>(secs.count());
+        std::tm tm_val{};
+#ifdef _WIN32
+        localtime_s(&tm_val, &time_t_val);
+#else
+        localtime_r(&time_t_val, &tm_val);
+#endif
         auto color = colors_[static_cast<std::size_t>(msg.log_level)];
-        auto level_name = to_string_view(msg.log_level);
 
-        // Build entire line in buffer, then single fwrite
-        std::format_to(std::back_inserter(buf_), "[{:%Y-%m-%d %H:%M:%S}] [{}] [", tp, msg.logger_name);
+        buf_.push_back('[');
+        simple_formatter::pad4(tm_val.tm_year + 1900, buf_);
+        buf_.push_back('-');
+        simple_formatter::pad2(tm_val.tm_mon + 1, buf_);
+        buf_.push_back('-');
+        simple_formatter::pad2(tm_val.tm_mday, buf_);
+        buf_.push_back(' ');
+        simple_formatter::pad2(tm_val.tm_hour, buf_);
+        buf_.push_back(':');
+        simple_formatter::pad2(tm_val.tm_min, buf_);
+        buf_.push_back(':');
+        simple_formatter::pad2(tm_val.tm_sec, buf_);
+        buf_.push_back('.');
+        simple_formatter::pad3(static_cast<int>(millis.count()), buf_);
+        buf_.append("] [");
+        buf_.append(msg.logger_name);
+        buf_.append("] [");
         buf_.append(color);
-        buf_.append(level_name);
+        buf_.append(to_string_view(msg.log_level));
         buf_.append(ansi_color::reset);
-        std::format_to(std::back_inserter(buf_), "] {}\n", msg.payload);
+        buf_.append("] ");
+        buf_.append(msg.payload);
+        buf_.push_back('\n');
+
         std::fwrite(buf_.data(), 1, buf_.size(), file_);
     }
 

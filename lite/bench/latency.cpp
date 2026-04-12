@@ -98,6 +98,17 @@ static void bench_color_sink_mt(benchmark::State &state) {
     }
 }
 
+// Bench just the chrono formatting cost
+static void bench_chrono_format(benchmark::State &state) {
+    std::string buf;
+    auto tp = std::chrono::floor<std::chrono::milliseconds>(std::chrono::system_clock::now());
+    for (auto _ : state) {
+        buf.clear();
+        std::format_to(std::back_inserter(buf), "[{:%Y-%m-%d %H:%M:%S}]", tp);
+        benchmark::DoNotOptimize(buf);
+    }
+}
+
 int main(int argc, char *argv[]) {
     int n_threads = benchmark::CPUInfo::Get().num_cpus;
 
@@ -106,6 +117,7 @@ int main(int argc, char *argv[]) {
     benchmark::RegisterBenchmark("disabled-at-runtime", bench_disabled_runtime);
     benchmark::RegisterBenchmark("null_sink_st (500_bytes c_str)", bench_null_sink_c_string);
     benchmark::RegisterBenchmark("null_sink_st", bench_null_sink_formatted);
+    benchmark::RegisterBenchmark("chrono_format_only", bench_chrono_format);
     benchmark::RegisterBenchmark("color_sink_st", bench_color_sink_st)->UseRealTime();
 
     if (full_bench) {
